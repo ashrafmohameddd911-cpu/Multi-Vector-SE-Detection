@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Outer web ring -->
+  <circle cx="64" cy="64" r="58" stroke="#ef4444" stroke-width="2" opacity="0.35"/>
+  <circle cx="64" cy="64" r="44" stroke="#ef4444" stroke-width="1.5" opacity="0.45"/>
+  <circle cx="64" cy="64" r="30" stroke="#ef4444" stroke-width="1.2" opacity="0.55"/>
+  <!-- Radial spokes -->
+  <g stroke="#ef4444" stroke-width="1.2" opacity="0.5">
+    <line x1="64" y1="6"  x2="64" y2="122"/>
+    <line x1="6"  y1="64" x2="122" y2="64"/>
+    <line x1="23" y1="23" x2="105" y2="105"/>
+    <line x1="105" y1="23" x2="23" y2="105"/>
+  </g>
+
+  <!-- Hooded figure silhouette -->
+  <g fill="#0f172a" stroke="#ef4444" stroke-width="2.2" stroke-linejoin="round">
+    <!-- Hood -->
+    <path d="M44 46
+             C 44 30, 84 30, 84 46
+             L 86 78
+             C 86 86, 78 92, 64 92
+             C 50 92, 42 86, 42 78 Z"/>
+    <!-- Face shadow -->
+    <path d="M52 56
+             C 52 50, 76 50, 76 56
+             L 74 74
+             C 74 80, 68 84, 64 84
+             C 60 84, 54 80, 54 74 Z" fill="#020617"/>
+  </g>
+
+  <!-- Red eyes -->
+  <g fill="#ef4444">
+    <circle cx="58" cy="66" r="2.6"/>
+    <circle cx="70" cy="66" r="2.6"/>
+  </g>
+
+  <!-- Spider legs on hood -->
+  <g stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" fill="none">
+    <path d="M44 50 L 32 42 L 30 32"/>
+    <path d="M44 58 L 28 54 L 22 50"/>
+    <path d="M44 66 L 28 70 L 22 80"/>
+    <path d="M84 50 L 96 42 L 98 32"/>
+    <path d="M84 58 L 100 54 L 106 50"/>
+    <path d="M84 66 L 100 70 L 106 80"/>
+  </g>
+</svg>
