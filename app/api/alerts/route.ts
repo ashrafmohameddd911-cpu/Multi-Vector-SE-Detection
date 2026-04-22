@@ -4,7 +4,7 @@ import { query } from '@/lib/mysql'
 /**
  * Return the most recent alerts joined with their correlation_group
  * (for scores + campaign_type + message_ids), the first message in the
- * group (for preview), and rules_hits (names).
+ * group (for preview), and rule_hits (names).
  *
  * Response shape is kept close to the client-side `Alert` interface.
  */
@@ -15,16 +15,14 @@ export async function GET() {
               a.group_id            AS group_id,
               a.c_score             AS a_c_score,
               a.severity            AS a_severity,
-              a.campaign_type       AS a_campaign_type,
               a.victims             AS victims,
               a.status              AS status,
               a.created_at          AS created_at,
-              a.resolved_at         AS resolved_at,
-              g.s1_score            AS s1_score,
               g.s2_score            AS s2_score,
               g.s3_score            AS s3_score,
               g.s4_score            AS s4_score,
               g.c_score             AS c_score,
+              g.campaign_type       AS a_campaign_type,
               g.entity_key          AS entity_key,
               g.vector_types        AS vector_types,
               g.message_ids         AS message_ids
@@ -41,12 +39,12 @@ export async function GET() {
     const groupIds = Array.from(new Set(alertRows.map((r) => r.group_id)))
     const placeholders = groupIds.map(() => '?').join(',')
 
-    // Pull rules_hits for all groups in a single query
+    // Pull rule_hits for all groups in a single query
     const ruleRows = await query<any>(
       `SELECT group_id, rule_name
-         FROM rules_hits
+         FROM rule_hits
         WHERE group_id IN (${placeholders})
-        ORDER BY created_at ASC`,
+        ORDER BY matched_at ASC`,
       groupIds
     )
     const rulesByGroup = new Map<string, string[]>()
@@ -92,7 +90,7 @@ export async function GET() {
         entity: r.entity_key,
         victim: victims[0] ?? previewMsg?.recipient ?? '',
         cgScore: Number(r.c_score ?? r.a_c_score ?? 0),
-        s1Score: Number(r.s1_score ?? 0),
+        s1Score: 0,
         s2Score: Number(r.s2_score ?? 0),
         s3Score: Number(r.s3_score ?? 0),
         s4Score: Number(r.s4_score ?? 0),
@@ -115,7 +113,7 @@ export async function GET() {
                 dmarc: 'pass',
                 domainAge: 365,
                 vtScore: 0,
-                urgencyScore: Math.round(Number(r.s1_score ?? 0)),
+                urgencyScore: 0,
                 rulesHit,
               },
             ]

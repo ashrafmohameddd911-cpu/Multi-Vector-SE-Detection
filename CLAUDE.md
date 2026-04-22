@@ -83,7 +83,7 @@ Severity buckets: `CRITICAL` ≥ 80, `HIGH` ≥ 60, `MEDIUM` ≥ 40, `LOW` ≥ 2
 Five tables, referenced from `lib/messages.ts`:
 
 - `messages` — raw events. Columns: `id, vector_type, sender, sender_domain, recipient, subject, raw_content, received_at, status`.
-- `correlation_groups` — one row per entity (sender domain for email, sender value for sms/call) within a 24h window. JSON columns: `message_ids`, `vector_types`. Score columns: `s1_score, s2_score, s3_score, s4_score, c_score`. Plus `severity`, `campaign_type`, `entity_key`, `actor_id` (nullable), `campaign_id` (nullable).
+- `correlation_groups` — one row per entity (sender domain for email, sender value for sms/call) within a 24h window. Columns: `id, entity_key, message_ids (JSON), vector_types (JSON), co_occurrence_score, priming_bonus, window_start, window_end, status, created_at, s2_score, s3_score, s4_score, c_score, max_severity, rule_hit_ids (JSON), actor_id, campaign_id, attack_type, campaign_type, related_victims (JSON), layer3_meta (JSON), layer4_meta (JSON), explanation`. NOTE: there is NO `s1_score` column. S1 is computed at ingest by `lib/detection-pipeline.ts` but not persisted. The Live Feed endpoint returns `s1 = 0` for compatibility. Use `max_severity` (not `severity`) as the column name. Use `created_at` (not `updated_at`) for ordering.
 - `rules_hits` — one row per rule fired per group. Columns: `group_id, rule_name, rule_score, vector_types (JSON), created_at`.
 - `alerts` — one row per group that crossed the severity threshold (not `DISMISSED`). Columns: `id, group_id, status, created_at, victims (JSON)`.
 - `known_bad_senders` — lookup list. Columns: `id, kind, value, threat_score, hit_count, first_seen, last_seen, is_known_bad`.

@@ -23,8 +23,8 @@ export async function GET(
   try {
     const groups = await query<any>(
       `SELECT id, entity_key, message_ids, vector_types,
-              s1_score, s2_score, s3_score, s4_score, c_score,
-              severity, campaign_type, created_at, updated_at
+              s2_score, s3_score, s4_score, c_score,
+              max_severity AS severity, campaign_type, created_at
          FROM correlation_groups
         WHERE id = ?`,
       [groupId]
@@ -49,16 +49,16 @@ export async function GET(
     }
 
     const rules = await query<any>(
-      `SELECT id, rule_name, rule_score, vector_types, created_at
-         FROM rules_hits
+      `SELECT id, rule_name, severity, matched_at
+         FROM rule_hits
         WHERE group_id = ?
-        ORDER BY rule_score DESC, created_at ASC`,
+        ORDER BY matched_at ASC`,
       [groupId]
     )
 
     const alerts = await query<any>(
-      `SELECT id, group_id, c_score, severity, campaign_type, victims,
-              status, created_at, resolved_at
+      `SELECT id, group_id, c_score, severity, victims,
+              status, created_at
          FROM alerts
         WHERE group_id = ?
         ORDER BY created_at DESC
@@ -67,7 +67,7 @@ export async function GET(
     )
     const alert = alerts[0] ?? null
 
-    const s1 = Number(g.s1_score) || 0
+    const s1 = 0
     const s2 = Number(g.s2_score) || 0
     const s3 = Number(g.s3_score) || 0
     const s4 = Number(g.s4_score) || 0
@@ -75,10 +75,7 @@ export async function GET(
 
     const vectorTypes = parseJsonArray(g.vector_types)
     const uniqueVectors = Array.from(new Set(vectorTypes))
-    const totalRuleScore = rules.reduce(
-      (acc: number, r: any) => acc + (Number(r.rule_score) || 0),
-      0
-    )
+    const totalRuleScore = rules.length
 
     // --- Rationale: human-readable reasons this group became an alert ---
     const rationale: {
@@ -195,7 +192,7 @@ export async function GET(
         s4,
         vectors: uniqueVectors,
         createdAt: toIso(g.created_at),
-        updatedAt: toIso(g.updated_at),
+        updatedAt: toIso(g.created_at),
         messageCount: messages.length,
       },
       messages: messages.map((m: any) => ({
@@ -212,9 +209,9 @@ export async function GET(
       rules: rules.map((r: any) => ({
         id: r.id,
         name: r.rule_name,
-        score: Number(r.rule_score) || 0,
-        vectorTypes: parseJsonArray(r.vector_types),
-        createdAt: toIso(r.created_at),
+        score: 0,
+        vectorTypes: [],
+        createdAt: toIso(r.matched_at),
       })),
       alert: alert
         ? {
@@ -222,7 +219,7 @@ export async function GET(
             status: alert.status,
             severity: alert.severity,
             createdAt: toIso(alert.created_at),
-            resolvedAt: toIso(alert.resolved_at),
+            resolvedAt: null,
             victims: parseJsonArray(alert.victims),
           }
         : null,

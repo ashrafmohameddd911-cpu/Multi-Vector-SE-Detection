@@ -19,71 +19,77 @@ export function useLiveAlerts(options: UseLiveAlertsOptions = {}) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  
   const abortRef = useRef<AbortController | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
-    mountedRef.current = true
+    mountedRef.current = true;
 
     const fetchAlerts = async () => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
+      // Abort previous request
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
         const res = await fetch('/api/alerts', {
           signal: controller.signal,
           cache: 'no-store',
-        })
-        if (!res.ok) throw new Error(`Failed to fetch alerts: ${res.status}`)
-        const data = (await res.json()) as any[]
-        if (!mountedRef.current) return
-        setAlerts(data.map(toAlert))
-        setError(null)
-      } catch (err) {
-        if ((err as any)?.name === 'AbortError') return
-        if (mountedRef.current) setError(err as Error)
+        });
+
+        if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+        const data = (await res.json()) as any[];
+        
+        if (!mountedRef.current) return;
+        setAlerts(data.map(toAlert));
+        setError(null);
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        if (mountedRef.current) setError(err as Error);
       } finally {
-        if (mountedRef.current) setIsLoading(false)
+        if (mountedRef.current) setIsLoading(false);
       }
-    }
+    };
 
     const schedule = () => {
-      if (document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden' || !mountedRef.current) return;
+      
       timerRef.current = setTimeout(async () => {
-        await fetchAlerts()
-        if (mountedRef.current) schedule()
-      }, intervalMs)
-    }
+        await fetchAlerts();
+        if (mountedRef.current) schedule();
+      }, intervalMs);
+    };
 
-    // Initial fetch, then start the polling loop
-    fetchAlerts().then(() => {
-      if (mountedRef.current) schedule()
-    })
-
-    const onVisibility = () => {
+    const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        // Resume immediately on tab re-focus
-        if (timerRef.current) clearTimeout(timerRef.current)
-        fetchAlerts().then(() => {
-          if (mountedRef.current) schedule()
-        })
-      } else if (timerRef.current) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
+        // Immediate refresh when user comes back to the tab
+        fetchAlerts();
+        schedule();
+      } else {
+        // Stop polling when tab is hidden
+        if (timerRef.current) clearTimeout(timerRef.current);
       }
-    }
-    document.addEventListener('visibilitychange', onVisibility)
+    };
 
+    // 1. Initial run
+    fetchAlerts();
+    schedule();
+
+    // 2. Event Listeners
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // 3. CLEANUP (The most important part)
     return () => {
-      mountedRef.current = false
-      if (timerRef.current) clearTimeout(timerRef.current)
-      abortRef.current?.abort()
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [intervalMs])
+      mountedRef.current = false;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      abortRef.current?.abort();
+    };
+  }, [intervalMs]);
 
-  return { alerts, isLoading, error }
+  return { alerts, isLoading, error };
 }
 
 /** Convert the /api/alerts JSON row into the client-side Alert shape. */

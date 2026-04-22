@@ -1,11 +1,12 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Sidebar } from '@/components/dashboard/sidebar'
 import { MainContent } from '@/components/dashboard/main-content'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { LargeScoreDisplay } from '@/components/dashboard/score-display'
 import { SeverityBadge } from '@/components/dashboard/severity-badge'
 import { VectorIcon } from '@/components/dashboard/vector-icon'
@@ -17,6 +18,8 @@ import {
   Clock,
   AlertTriangle,
   Info,
+  Search,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Severity } from '@/lib/mock-data'
@@ -68,22 +71,130 @@ interface InvestigationData {
   weights: { s1: number; s2: number; s3: number; s4: number }
 }
 
+interface GroupResult {
+  id: string
+  entity_key: string
+  severity: string
+  campaign_type: string | null
+  c_score: number
+  vector_types: string[]
+  message_count: number
+  created_at: string | null
+  alert: { id: string; status: string } | null
+}
+
 const vectorIcons = { email: Mail, sms: MessageSquare, call: Phone } as const
+
+// ---------- Group search panel ----------
+
+function GroupSearch({ onSelect }: { onSelect: (groupId: string) => void }) {
+  const [search, setSearch] = useState('')
+  const [results, setResults] = useState<GroupResult[]>([])
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setLoading(true)
+      fetch(`/api/groups?search=${encodeURIComponent(search)}&limit=20`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((data) => {
+          setResults(Array.isArray(data) ? data : [])
+        })
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false))
+    }, 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [search])
+
+  return (
+    <Card className="bg-[#1E293B] border-slate-700">
+      <CardHeader>
+        <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
+          <Search className="h-5 w-5 text-slate-400" />
+          Find a Correlation Group
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            placeholder="Search by entity (domain / sender) or paste a group ID…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500"
+          />
+          {loading && (
+            <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-slate-400" />
+          )}
+        </div>
+
+        {results.length === 0 && !loading && (
+          <p className="text-center text-sm text-slate-500 py-4">
+            {search ? 'No groups found.' : 'Recent groups will appear here.'}
+          </p>
+        )}
+
+        <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+          {results.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => onSelect(g.id)}
+              className="w-full text-left rounded-lg bg-slate-800/50 hover:bg-slate-700/60 px-3 py-2.5 transition-colors"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-sm font-medium text-white truncate flex-1">
+                  {g.entity_key}
+                </span>
+                <SeverityBadge severity={g.severity.toUpperCase() as any} />
+                {g.alert && (
+                  <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-300">
+                    Alert · {g.alert.status}
+                  </span>
+                )}
+                <span className="text-xs font-semibold text-slate-300">
+                  C={g.c_score.toFixed(2)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center gap-3 text-[10px] text-slate-500">
+                <span>{g.campaign_type ?? '—'}</span>
+                <span>{g.message_count} msg{g.message_count !== 1 ? 's' : ''}</span>
+                <span>{g.vector_types.join(', ')}</span>
+                <span className="ml-auto">{formatTime(g.created_at)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------- Investigation content ----------
 
 function InvestigationContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const groupId = searchParams.get('group') || ''
+
   const [data, setData] = useState<InvestigationData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!groupId) {
+      setData(null)
+      setError(null)
       setLoading(false)
       return
     }
     let cancelled = false
     setLoading(true)
+    setData(null)
+    setError(null)
     fetch(`/api/investigation/${encodeURIComponent(groupId)}`, { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -92,7 +203,6 @@ function InvestigationContent() {
       .then((json) => {
         if (cancelled) return
         setData(json)
-        setError(null)
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message ?? 'Failed to load')
@@ -103,59 +213,57 @@ function InvestigationContent() {
     }
   }, [groupId])
 
+  const handleSelectGroup = (id: string) => {
+    router.push(`/investigation?group=${id}`)
+  }
+
   return (
     <div className="min-h-screen bg-[#0F172A]">
       <Sidebar />
       <MainContent>
         <div className="mb-6">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-white">Group Investigation</h1>
             {groupId && (
-              <Badge variant="outline" className="border-blue-500 text-blue-400 font-mono">
+              <Badge variant="outline" className="border-blue-500 text-blue-400 font-mono text-xs">
                 {groupId}
               </Badge>
             )}
             {data?.alert && (
-              <Badge
-                variant="outline"
-                className="border-red-500 text-red-400"
-              >
-                Alert {data.alert.id} · {data.alert.status}
+              <Badge variant="outline" className="border-red-500 text-red-400">
+                Alert {data.alert.id.slice(0, 8)}… · {data.alert.status}
               </Badge>
             )}
           </div>
-          <p className="text-sm text-slate-400">
-            Why this correlation group became an alert
+          <p className="text-sm text-slate-400 mt-1">
+            Search for a correlation group or open one from the Alert Queue
           </p>
         </div>
 
-        {!groupId && (
-          <Card className="bg-[#1E293B] border-slate-700">
-            <CardContent className="py-10 text-center text-sm text-slate-400">
-              No group selected. Open a row from the Alert Queue and click
-              &quot;Investigate&quot;.
-            </CardContent>
-          </Card>
-        )}
+        {/* Search panel — always visible so you can navigate to other groups */}
+        <GroupSearch onSelect={handleSelectGroup} />
 
+        {/* Loading */}
         {groupId && loading && (
-          <Card className="bg-[#1E293B] border-slate-700">
-            <CardContent className="py-10 text-center text-sm text-slate-400">
+          <Card className="mt-6 bg-[#1E293B] border-slate-700">
+            <CardContent className="py-10 text-center text-sm text-slate-400 flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
               Loading investigation…
             </CardContent>
           </Card>
         )}
 
+        {/* Error */}
         {groupId && !loading && error && (
-          <Card className="bg-[#1E293B] border-red-500/50">
+          <Card className="mt-6 bg-[#1E293B] border-red-500/50">
             <CardContent className="py-6 text-sm text-red-300">
-              Failed to load: {error}
+              Failed to load group: {error}
             </CardContent>
           </Card>
         )}
 
         {data && (
-          <>
+          <div className="mt-6 space-y-6">
             {/* Why this alert? */}
             <Card className="bg-[#1E293B] border-slate-700">
               <CardHeader>
@@ -174,7 +282,7 @@ function InvestigationContent() {
             </Card>
 
             {/* Score Breakdown */}
-            <Card className="mt-6 bg-[#1E293B] border-slate-700">
+            <Card className="bg-[#1E293B] border-slate-700">
               <CardHeader>
                 <CardTitle className="text-lg font-semibold text-white">
                   Score Breakdown
@@ -212,19 +320,40 @@ function InvestigationContent() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="flex-1 max-w-md text-xs text-slate-400 space-y-1">
-                    <div><span className="text-slate-500">Entity key:</span> <span className="font-mono text-slate-300">{data.group.entityKey}</span></div>
-                    <div><span className="text-slate-500">Campaign type:</span> <span className="text-slate-300">{data.group.campaignType ?? '—'}</span></div>
-                    <div><span className="text-slate-500">Vectors:</span> <span className="text-slate-300">{data.group.vectors.join(', ') || '—'}</span></div>
-                    <div><span className="text-slate-500">Messages:</span> <span className="text-slate-300">{data.group.messageCount}</span></div>
-                    <div><span className="text-slate-500">Created:</span> <span className="text-slate-300">{formatTime(data.group.createdAt)}</span></div>
+                  <div className="flex-1 max-w-md text-xs text-slate-400 space-y-1.5">
+                    <div>
+                      <span className="text-slate-500">Entity key: </span>
+                      <span className="font-mono text-slate-300">{data.group.entityKey}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Campaign type: </span>
+                      <span className="text-slate-300">{data.group.campaignType ?? '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Vectors: </span>
+                      <span className="text-slate-300">{data.group.vectors.join(', ') || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Messages in group: </span>
+                      <span className="text-slate-300">{data.group.messageCount}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Created: </span>
+                      <span className="text-slate-300">{formatTime(data.group.createdAt)}</span>
+                    </div>
+                    {data.alert && (
+                      <div>
+                        <span className="text-slate-500">Alert status: </span>
+                        <span className="text-slate-300">{data.alert.status}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             {/* Rules fired */}
-            <Card className="mt-6 bg-[#1E293B] border-slate-700">
+            <Card className="bg-[#1E293B] border-slate-700">
               <CardHeader>
                 <CardTitle className="text-lg font-semibold text-white">
                   Rules fired ({data.rules.length})
@@ -235,19 +364,22 @@ function InvestigationContent() {
                   <p className="text-sm text-slate-500">No rules fired for this group.</p>
                 ) : (
                   <ul className="space-y-1.5">
-                    {data.rules.map((r) => (
+                    {data.rules.map((r, i) => (
                       <li
-                        key={r.id}
+                        key={r.id ?? i}
                         className="flex items-center justify-between rounded-md bg-slate-800/50 px-3 py-2 text-sm"
                       >
                         <div>
                           <div className="font-medium text-slate-200">{r.name}</div>
                           <div className="text-xs text-slate-500">
-                            {r.vectorTypes.length > 0 ? r.vectorTypes.join(', ') : 'any'} · {formatTime(r.createdAt)}
+                            {formatTime(r.createdAt)}
                           </div>
                         </div>
-                        <Badge variant="secondary" className="bg-violet-500/20 text-violet-300 font-mono">
-                          +{r.score.toFixed(2)}
+                        <Badge
+                          variant="secondary"
+                          className="bg-violet-500/20 text-violet-300 font-mono"
+                        >
+                          fired
                         </Badge>
                       </li>
                     ))}
@@ -256,9 +388,9 @@ function InvestigationContent() {
               </CardContent>
             </Card>
 
-            {/* Timeline */}
+            {/* Message Timeline */}
             {data.messages.length > 0 && (
-              <Card className="mt-6 bg-[#1E293B] border-slate-700">
+              <Card className="bg-[#1E293B] border-slate-700">
                 <CardHeader>
                   <CardTitle className="text-lg font-semibold text-white">
                     Message Timeline
@@ -330,7 +462,7 @@ function InvestigationContent() {
             )}
 
             {/* Message Details */}
-            <Card className="mt-6 bg-[#1E293B] border-slate-700">
+            <Card className="bg-[#1E293B] border-slate-700">
               <CardHeader>
                 <CardTitle className="text-lg font-semibold text-white">
                   Messages in this group ({data.messages.length})
@@ -339,7 +471,7 @@ function InvestigationContent() {
               <CardContent className="space-y-3 max-h-[560px] overflow-y-auto">
                 {data.messages.map((msg) => (
                   <div key={msg.id} className="rounded-lg bg-slate-800/50 p-4 space-y-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         <VectorIcon vector={msg.vector} showLabel />
                         <span className="text-xs text-slate-500">
@@ -349,40 +481,40 @@ function InvestigationContent() {
                           {msg.status}
                         </span>
                       </div>
-                      <span className="font-mono text-xs text-slate-500">{msg.id}</span>
+                      <span className="font-mono text-[10px] text-slate-500">{msg.id}</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div>
-                        <span className="text-slate-500">From:</span>
+                        <span className="text-slate-500">From: </span>
                         <p className="text-slate-300 truncate">{msg.sender}</p>
                       </div>
                       <div>
-                        <span className="text-slate-500">To:</span>
+                        <span className="text-slate-500">To: </span>
                         <p className="text-slate-300 truncate">{msg.recipient}</p>
                       </div>
                     </div>
                     {msg.subject && (
                       <div className="text-xs">
-                        <span className="text-slate-500">Subject:</span>
+                        <span className="text-slate-500">Subject: </span>
                         <p className="text-slate-300">{msg.subject}</p>
                       </div>
                     )}
                     <div className="text-xs">
-                      <span className="text-slate-500">Content:</span>
-                      <p className="text-slate-300 whitespace-pre-wrap break-words">
-                        {msg.content}
-                      </p>
+                      <span className="text-slate-500">Content: </span>
+                      <p className="text-slate-300 whitespace-pre-wrap break-words">{msg.content}</p>
                     </div>
                   </div>
                 ))}
               </CardContent>
             </Card>
-          </>
+          </div>
         )}
       </MainContent>
     </div>
   )
 }
+
+// ---------- Small helpers ----------
 
 function ScoreRow({ label, raw, weight }: { label: string; raw: number; weight: number }) {
   const weighted = raw * weight
@@ -417,9 +549,7 @@ function RationaleRow({ r }: { r: Rationale }) {
           <p className="text-sm font-semibold">{r.title}</p>
           <p className="mt-0.5 text-xs opacity-80">{r.detail}</p>
         </div>
-        <span className="text-[10px] uppercase tracking-wide opacity-70">
-          {r.severity}
-        </span>
+        <span className="text-[10px] uppercase tracking-wide opacity-70">{r.severity}</span>
       </div>
     </div>
   )

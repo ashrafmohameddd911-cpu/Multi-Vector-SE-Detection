@@ -1,9 +1,16 @@
 import { type Vector, type Severity } from './mock-data'
+import type { DomainAuth } from './domain-auth'
 
 /**
  * Simulates the detection pipeline for incoming messages
  * Calculates threat scores based on various indicators
  */
+
+export interface KnownBadResult {
+  isKnownBad: boolean
+  threatScore: number
+  matchedKind: 'email' | 'domain' | null
+}
 
 interface DetectionResult {
   s1Score: number // Urgency & Authority (0-100)
@@ -59,27 +66,57 @@ const calculateS1Score = (content: string): { score: number; rulesHit: string[] 
   return { score: Math.min(100, score), rulesHit }
 }
 
-const calculateS2Score = (sender: string, domain?: string): { score: number; rulesHit: string[] } => {
+const calculateS2Score = (
+  sender: string,
+  domain: string | undefined,
+  knownBad?: KnownBadResult,
+  domainAuth?: DomainAuth
+): { score: number; rulesHit: string[] } => {
   let score = 50 // Base score
   const rulesHit: string[] = []
 
-  // Domain age simulation (assume new domains are suspicious)
-  score += Math.random() * 30
-  if (!rulesHit.includes('Suspicious Domain Age')) {
-    rulesHit.push('Suspicious Domain Age')
+  if (knownBad?.isKnownBad) {
+    score = Math.max(score, knownBad.threatScore)
+    rulesHit.push('Known Bad Sender')
+  } else if (domainAuth) {
+    // Real SPF/DMARC scoring (no DKIM in this path)
+    if (!domainAuth.hasSpf) {
+      score += 20
+      rulesHit.push('No SPF Record')
+    } else if (domainAuth.spfPolicy === 'pass-all') {
+      score += 10
+      rulesHit.push('SPF Permissive (+all)')
+    } else if (domainAuth.spfPolicy === 'strict') {
+      score -= 5
+    }
+
+    if (!domainAuth.hasDmarc) {
+      score += 15
+      rulesHit.push('No DMARC Policy')
+    } else if (domainAuth.dmarcPolicy === 'none') {
+      score += 5
+      rulesHit.push('DMARC Monitor-Only')
+    } else if (domainAuth.dmarcPolicy === 'reject') {
+      score -= 5
+    }
+  } else {
+    // Legacy path: Math.random() scoring
+    score += Math.random() * 30
+    if (!rulesHit.includes('Suspicious Domain Age')) {
+      rulesHit.push('Suspicious Domain Age')
+    }
+
+    if (Math.random() > 0.5) {
+      score += 15
+      rulesHit.push('SPF Failure')
+    }
+    if (Math.random() > 0.5) {
+      score += 15
+      rulesHit.push('DKIM Failure')
+    }
   }
 
-  // SPF/DKIM/DMARC failures
-  if (Math.random() > 0.5) {
-    score += 15
-    rulesHit.push('SPF Failure')
-  }
-  if (Math.random() > 0.5) {
-    score += 15
-    rulesHit.push('DKIM Failure')
-  }
-
-  // Suspicious sender patterns
+  // Suspicious sender patterns (both paths)
   if (/[\d]{1,3}[\w]+|[-.]/.test(sender)) {
     score += 10
     if (!rulesHit.includes('Suspicious Sender Domain')) {
@@ -87,7 +124,7 @@ const calculateS2Score = (sender: string, domain?: string): { score: number; rul
     }
   }
 
-  return { score: Math.min(100, score), rulesHit }
+  return { score: Math.max(0, Math.min(100, score)), rulesHit }
 }
 
 const calculateS3Score = (content: string): { score: number; rulesHit: string[] } => {
@@ -166,10 +203,17 @@ export const processMessage = (
     recipient: string
     content: string
   },
-  domain?: string
+  domain?: string,
+  knownBad?: KnownBadResult,
+  domainAuth?: DomainAuth
 ): DetectionResult => {
   const { score: s1Score, rulesHit: s1Rules } = calculateS1Score(messageData.content)
-  const { score: s2Score, rulesHit: s2Rules } = calculateS2Score(messageData.sender, domain)
+  const { score: s2Score, rulesHit: s2Rules } = calculateS2Score(
+    messageData.sender,
+    domain,
+    knownBad,
+    domainAuth
+  )
   const { score: s3Score, rulesHit: s3Rules } = calculateS3Score(messageData.content)
   const { score: s4Score, rulesHit: s4Rules } = calculateS4Score(messageData.vector)
 

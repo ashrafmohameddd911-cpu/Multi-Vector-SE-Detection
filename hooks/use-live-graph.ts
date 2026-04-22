@@ -31,82 +31,91 @@ export interface GraphResponse {
   }
 }
 
-interface Options {
-  labels?: string[]
-  limit?: number
-  pollMs?: number
-  enabled?: boolean
+interface UseLiveGraphOptions {
+  labels?: string[];
+  limit?: number;
+  pollMs?: number;
+  enabled?: boolean;
 }
 
-const DEFAULT_POLL_MS = 5_000
+const DEFAULT_POLL_MS = 5000;
 
 /**
  * Polls /api/neo4j/graph and returns the latest `{ nodes, edges }`.
  * Pauses when the browser tab is hidden.
  */
-export function useLiveGraph(opts: Options = {}) {
-  const { labels, limit = 500, pollMs = DEFAULT_POLL_MS, enabled = true } = opts
-  const [data, setData] = useState<GraphResponse>({ nodes: [], edges: [] })
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  const labelsKey = labels?.join(',') ?? ''
+export function useLiveGraph(opts: UseLiveGraphOptions = {}) {
+  const { labels, limit = 500, pollMs = DEFAULT_POLL_MS, enabled = true } = opts;
+  const [data, setData] = useState<GraphResponse>({ nodes: [], edges: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const labelsKey = labels?.join(',') ?? '';
 
   const fetchOnce = useCallback(async () => {
-    abortRef.current?.abort()
-    const ac = new AbortController()
-    abortRef.current = ac
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
-      const qs = new URLSearchParams()
-      if (labelsKey) qs.set('labels', labelsKey)
-      if (limit) qs.set('limit', String(limit))
+      const qs = new URLSearchParams();
+      if (labelsKey) qs.set('labels', labelsKey);
+      if (limit) qs.set('limit', String(limit));
+
       const res = await fetch(`/api/neo4j/graph?${qs.toString()}`, {
         signal: ac.signal,
         cache: 'no-store',
-      })
-      if (!res.ok) throw new Error(`graph ${res.status}`)
-      const json: GraphResponse = await res.json()
-      setData(json)
-      setError(null)
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return
-      setError(err?.message ?? 'failed')
-    } finally {
-      setLoading(false)
-    }
-  }, [labelsKey, limit])
+      });
 
-  useEffect(() => {
-    if (!enabled) return
+      if (!res.ok) return; // Exit silently on bad response
 
-    let active = true
-    let timer: ReturnType<typeof setTimeout> | null = null
-
-    const tick = async () => {
-      if (!active) return
-      if (document.hidden) {
-        timer = setTimeout(tick, pollMs)
-        return
+      const json = await res.json();
+      if (mountedRef.current) {
+        setData(json);
+        setError(null);
       }
-      await fetchOnce()
-      if (!active) return
-      timer = setTimeout(tick, pollMs)
+    } catch (err: any) {
+      // DO NOT THROW ANYTHING. Just return.
+      return; 
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
+  }, [labelsKey, limit]);
 
-    tick()
+  // hooks/use-live-graph.ts
 
-    const onVisible = () => {
-      if (!document.hidden) fetchOnce()
-    }
-    document.addEventListener('visibilitychange', onVisible)
+useEffect(() => {
+  mountedRef.current = true;
+  if (!enabled) return;
 
-    return () => {
-      active = false
-      if (timer) clearTimeout(timer)
-      abortRef.current?.abort()
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [enabled, pollMs, fetchOnce])
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
-  return { data, loading, error, refresh: fetchOnce }
+  const tick = async () => {
+  if (!mountedRef.current) return;
+
+  try {
+    // Await the fetch, but catch the abort here
+    await fetchOnce();
+  } catch (err: any) {
+    // This stops the red error text in your console
+    if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
+    console.error("Fetch failed:", err);
+  }
+
+  if (mountedRef.current) {
+    timer = setTimeout(tick, pollMs);
+  }
+};
+
+  tick();
+
+  return () => {
+    mountedRef.current = false;
+    if (timer) clearTimeout(timer);
+    abortRef.current?.abort(); // This triggers the error we now catch above
+  };
+}, [enabled, pollMs, fetchOnce]);
+  return { data, loading, error, refresh: fetchOnce };
 }

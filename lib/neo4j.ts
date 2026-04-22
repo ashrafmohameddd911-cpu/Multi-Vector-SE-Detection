@@ -87,8 +87,8 @@ export async function writeTxBatch(
 }
 
 /**
- * Serialise a neo4j Record into plain JS. Handles Node, Relationship,
- * Path, Integer, and nested arrays/objects.
+ * Serialise a neo4j Record into plain JS.
+ * Handles Node, Relationship, temporal types (DateTime, Date, etc.), Integer, and nested structures.
  */
 export function recordToObject(r: Neo4jRecord): Record<string, any> {
   const obj: Record<string, any> = {}
@@ -98,24 +98,38 @@ export function recordToObject(r: Neo4jRecord): Record<string, any> {
   return obj
 }
 
-function serialise(value: any): any {
+export function serialise(value: any): any {
   if (value === null || value === undefined) return value
+
+  // Neo4j Integer (only present when disableLosslessIntegers is false, but kept for safety)
   if (neo4j.isInt(value)) return value.toNumber()
+
+  // Neo4j temporal types — convert to ISO string via their built-in toString()
+  if (
+    neo4j.isDateTime(value) ||
+    neo4j.isLocalDateTime(value) ||
+    neo4j.isDate(value) ||
+    neo4j.isTime(value) ||
+    neo4j.isLocalTime(value) ||
+    neo4j.isDuration(value)
+  ) {
+    return value.toString()
+  }
+
   if (Array.isArray(value)) return value.map(serialise)
+
   if (value && typeof value === 'object') {
-    // Node
-    if ('labels' in value && 'properties' in value && 'identity' in value) {
+    // Neo4j Node
+    if ('labels' in value && 'properties' in value && 'elementId' in value) {
       return {
-        id: neo4j.isInt(value.identity) ? value.identity.toNumber() : value.identity,
         elementId: value.elementId,
         labels: value.labels,
         properties: serialise(value.properties),
       }
     }
-    // Relationship
-    if ('type' in value && 'start' in value && 'end' in value && 'properties' in value) {
+    // Neo4j Relationship
+    if ('type' in value && 'startNodeElementId' in value && 'endNodeElementId' in value) {
       return {
-        id: neo4j.isInt(value.identity) ? value.identity.toNumber() : value.identity,
         elementId: value.elementId,
         type: value.type,
         startElementId: value.startNodeElementId,
@@ -123,10 +137,11 @@ function serialise(value: any): any {
         properties: serialise(value.properties),
       }
     }
-    // Plain object / properties
+    // Plain object / property map
     const out: Record<string, any> = {}
     for (const k of Object.keys(value)) out[k] = serialise(value[k])
     return out
   }
+
   return value
 }

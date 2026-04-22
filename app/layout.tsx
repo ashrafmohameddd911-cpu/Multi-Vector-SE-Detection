@@ -74,7 +74,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark bg-[#0F172A]" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: stripExtensionAttrs }} />
+        <script dangerouslySetInnerHTML={{ __html: stripExtensionAttrs }} suppressHydrationWarning />
       </head>
       <body
         suppressHydrationWarning
