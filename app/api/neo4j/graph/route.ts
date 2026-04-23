@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { readTx } from '@/lib/neo4j'
 import neo4j from 'neo4j-driver'
+
 /**
  * GET /api/neo4j/graph
  *
@@ -8,12 +9,11 @@ import neo4j from 'neo4j-driver'
  *
  * Query params:
  *   labels  = comma-separated node labels to include (default: all)
- *   limit   = max nodes (default 500, hard cap 5000)
+ *   limit   = max nodes (default 1000, hard cap 1000)
  *   since   = ISO datetime — filter Message/Group/Alert nodes by creation time
  *
  * Node IDs use Neo4j elementId (always unique, works for all label types).
  */
-
 const ALL_LABELS = [
   'Attacker',
   'Victim',
@@ -23,7 +23,6 @@ const ALL_LABELS = [
   'Rule',
   'Campaign',
 ] as const
-
 type NodeLabel = (typeof ALL_LABELS)[number]
 
 export async function GET(request: Request) {
@@ -39,8 +38,10 @@ export async function GET(request: Request) {
         .filter((s): s is NodeLabel => (ALL_LABELS as readonly string[]).includes(s))
     : [...ALL_LABELS]
 
-  const rawLimit = parseInt(limitParam ?? '500', 10) || 500
-  const limit = Number(clamp(rawLimit, 1, 5000))
+  const rawLimit = parseInt(limitParam ?? '1000', 10) || 1000
+  // Apply hard cap at 1000
+  const limit = Math.min(rawLimit, 1000)
+
   const since = sinceParam && !Number.isNaN(Date.parse(sinceParam)) ? sinceParam : null
 
   try {
@@ -54,8 +55,8 @@ export async function GET(request: Request) {
     // their label is selected.
     const nodeRows = await readTx<any>(
       `
-      MATCH (n)
-      WHERE any(l IN labels(n) WHERE l IN $labels)
+        MATCH (n)
+        WHERE any(l IN labels(n) WHERE l IN $labels)
         AND (
           $since IS NULL
           OR NOT (n:Message OR n:CorrelationGroup OR n:Alert)
@@ -63,26 +64,23 @@ export async function GET(request: Request) {
           OR (n:CorrelationGroup AND n.created_at  >= $since)
           OR (n:Alert            AND n.created_at  >= $since)
         )
-      RETURN n, elementId(n) AS eid
-      LIMIT $limit
+        RETURN n, elementId(n) AS eid
+        LIMIT $limit
       `,
       // Wrap limit in neo4j.int() here
-      { labels: requestedLabels, since, limit: neo4j.int(limit) } 
+      { labels: requestedLabels, since, limit: neo4j.int(limit) }
     )
 
     const nodes: GraphNode[] = []
     const eidSet = new Set<string>()
-
     for (const row of nodeRows) {
       const eid = String(row.eid)
       const n = row.n
       if (!n || !n.labels) continue
-
       const labels = n.labels as NodeLabel[]
       const props = n.properties ?? {}
       const primary = pickPrimaryLabel(labels)
       if (!primary) continue
-
       eidSet.add(eid)
       nodes.push({
         id: eid,
@@ -111,14 +109,14 @@ export async function GET(request: Request) {
     const eids = [...eidSet]
     const edgeRows = await readTx<any>(
       `
-      MATCH (a)-[r]->(b)
-      WHERE elementId(a) IN $eids AND elementId(b) IN $eids
-      RETURN elementId(a) AS source,
-            elementId(b) AS target,
-            type(r)      AS type,
-            properties(r) AS props,
-            elementId(r)  AS edgeId
-      LIMIT $edgeLimit
+        MATCH (a)-[r]->(b)
+        WHERE elementId(a) IN $eids AND elementId(b) IN $eids
+        RETURN elementId(a) AS source,
+               elementId(b) AS target,
+               type(r)      AS type,
+               properties(r) AS props,
+               elementId(r)  AS edgeId
+        LIMIT $edgeLimit
       `,
       // Wrap edgeLimit in neo4j.int() here
       { eids, edgeLimit: neo4j.int(Math.floor(limit * 8)) }
@@ -163,7 +161,6 @@ export async function GET(request: Request) {
 }
 
 /* ---------- types ---------- */
-
 interface GraphNode {
   id: string
   label: NodeLabel
@@ -184,7 +181,6 @@ interface GraphEdge {
 }
 
 /* ---------- helpers ---------- */
-
 function pickPrimaryLabel(labels: NodeLabel[]): NodeLabel | null {
   const priority: NodeLabel[] = ['Alert', 'CorrelationGroup', 'Attacker', 'Victim', 'Message', 'Rule', 'Campaign']
   for (const p of priority) if (labels.includes(p)) return p
@@ -222,8 +218,8 @@ function colorFor(label: NodeLabel, props: Record<string, any>): string {
       return '#22c55e'
     case 'Message':
       if (props.vector === 'email') return '#60a5fa'
-      if (props.vector === 'sms')   return '#fbbf24'
-      if (props.vector === 'call')  return '#f472b6'
+      if (props.vector === 'sms') return '#fbbf24'
+      if (props.vector === 'call') return '#f472b6'
       return '#94a3b8'
     case 'CorrelationGroup':
       return severityColor(props.severity)
@@ -241,23 +237,23 @@ function colorFor(label: NodeLabel, props: Record<string, any>): string {
 function severityColor(sev: any): string {
   switch (String(sev ?? '').toUpperCase()) {
     case 'CRITICAL': return '#dc2626'
-    case 'HIGH':     return '#f97316'
-    case 'MEDIUM':   return '#eab308'
-    case 'LOW':      return '#22c55e'
-    default:         return '#64748b'
+    case 'HIGH': return '#f97316'
+    case 'MEDIUM': return '#eab308'
+    case 'LOW': return '#22c55e'
+    default: return '#64748b'
   }
 }
 
 function sizeFor(label: NodeLabel, props: Record<string, any>): number {
   switch (label) {
-    case 'Alert':            return 50
+    case 'Alert': return 50
     case 'CorrelationGroup': return 40
-    case 'Attacker':         return props.is_known_bad ? 44 : 36
-    case 'Victim':           return 30
-    case 'Campaign':         return 44
-    case 'Rule':             return 26
-    case 'Message':          return 22
-    default:                 return 28
+    case 'Attacker': return props.is_known_bad ? 44 : 36
+    case 'Victim': return 30
+    case 'Campaign': return 44
+    case 'Rule': return 26
+    case 'Message': return 22
+    default: return 28
   }
 }
 

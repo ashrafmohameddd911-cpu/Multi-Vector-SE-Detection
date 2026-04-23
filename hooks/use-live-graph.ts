@@ -52,10 +52,15 @@ export function useLiveGraph(opts: UseLiveGraphOptions = {}) {
   
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const labelsKey = labels?.join(',') ?? '';
 
   const fetchOnce = useCallback(async () => {
-    abortRef.current?.abort();
+    // Abort previous request
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
     const ac = new AbortController();
     abortRef.current = ac;
 
@@ -69,7 +74,12 @@ export function useLiveGraph(opts: UseLiveGraphOptions = {}) {
         cache: 'no-store',
       });
 
-      if (!res.ok) return; // Exit silently on bad response
+      if (!res.ok) {
+        if (mountedRef.current) {
+          setError('Failed to fetch graph data');
+        }
+        return;
+      }
 
       const json = await res.json();
       if (mountedRef.current) {
@@ -77,45 +87,61 @@ export function useLiveGraph(opts: UseLiveGraphOptions = {}) {
         setError(null);
       }
     } catch (err: any) {
-      // DO NOT THROW ANYTHING. Just return.
-      return; 
+      // Only log if it's not an abort error
+      if (err.name !== 'AbortError') {
+        console.error('Fetch error:', err);
+        if (mountedRef.current) {
+          setError(err.message || 'Failed to fetch graph');
+        }
+      }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [labelsKey, limit]);
 
-  // hooks/use-live-graph.ts
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!enabled) return;
 
-useEffect(() => {
-  mountedRef.current = true;
-  if (!enabled) return;
+    const tick = async () => {
+      if (!mountedRef.current) return;
 
-  let timer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        await fetchOnce();
+      } catch (err: any) {
+        // Silently ignore abort errors
+        if (err.name !== 'AbortError') {
+          console.error('Polling error:', err);
+        }
+      }
 
-  const tick = async () => {
-  if (!mountedRef.current) return;
+      // Schedule next tick only if still mounted
+      if (mountedRef.current) {
+        timerRef.current = setTimeout(tick, pollMs);
+      }
+    };
 
-  try {
-    // Await the fetch, but catch the abort here
-    await fetchOnce();
-  } catch (err: any) {
-    // This stops the red error text in your console
-    if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
-    console.error("Fetch failed:", err);
-  }
+    // Start polling
+    tick();
 
-  if (mountedRef.current) {
-    timer = setTimeout(tick, pollMs);
-  }
-};
+    return () => {
+      mountedRef.current = false;
+      
+      // Clear timer
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      
+      // Abort fetch
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
+  }, [enabled, pollMs, fetchOnce]);
 
-  tick();
-
-  return () => {
-    mountedRef.current = false;
-    if (timer) clearTimeout(timer);
-    abortRef.current?.abort(); // This triggers the error we now catch above
-  };
-}, [enabled, pollMs, fetchOnce]);
   return { data, loading, error, refresh: fetchOnce };
 }

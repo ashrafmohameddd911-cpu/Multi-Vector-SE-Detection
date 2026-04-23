@@ -46,35 +46,35 @@ function attackerKind(vector: string): string {
 export async function syncAll(): Promise<SyncStats> {
   // --- STEP 1: FETCH DATA FROM MYSQL ---
   const [messages, groups, alerts, rules, kbs] = await Promise.all([
-    query<any>(
-      `SELECT id, vector_type, sender, sender_domain, recipient,
-              raw_content, subject, received_at, status
-         FROM messages
-        ORDER BY received_at DESC
-        LIMIT 5000`
-    ),
-    query<any>(
-      `SELECT id, message_ids, entity_key, vector_types,
-              s2_score, s3_score, s4_score, c_score,
-              max_severity AS severity, campaign_type, created_at
-         FROM correlation_groups
-        ORDER BY created_at DESC
-        LIMIT 5000`
-    ),
-    query<any>(
-      `SELECT id, group_id, c_score, severity, victims, status, created_at
-         FROM alerts
-        ORDER BY created_at DESC
-        LIMIT 5000`
-    ),
-    query<any>(
-      `SELECT id, group_id, rule_name, severity, matched_at
-         FROM rule_hits
-        ORDER BY matched_at DESC
-        LIMIT 10000`
-    ),
-    query<any>(
-      `SELECT 
+  query<any>(
+    `SELECT id, vector_type, sender, sender_domain, recipient,
+            raw_content, subject, received_at, status
+       FROM messages
+      ORDER BY received_at DESC
+      LIMIT 500`
+  ),
+  query<any>(
+    `SELECT id, message_ids, entity_key, vector_types,
+            s2_score, s3_score, s4_score, c_score,
+            max_severity AS severity, campaign_type, created_at
+       FROM correlation_groups
+      ORDER BY created_at DESC
+      LIMIT 500`
+  ),
+  query<any>(
+    `SELECT id, group_id, c_score, severity, victims, status, created_at
+       FROM alerts
+      ORDER BY created_at DESC
+      LIMIT 500`
+  ),
+  query<any>(
+    `SELECT id, group_id, rule_name, severity, matched_at
+       FROM rule_hits
+      ORDER BY matched_at DESC
+      LIMIT 10000`
+  ),
+  query<any>(
+    `SELECT 
           id, 
           sender_type AS kind, 
           sender_value AS value, 
@@ -85,8 +85,8 @@ export async function syncAll(): Promise<SyncStats> {
           1 AS is_known_bad
        FROM known_bad_senders
        LIMIT 5000`
-    ),
-  ])
+  ),
+])
 
   // --- STEP 2: SCHEMA PHASE (Wait for these to finish before writing data) ---
   const indexStmts = [
@@ -105,7 +105,7 @@ export async function syncAll(): Promise<SyncStats> {
   const stmts: { cypher: string; params: Record<string, any> }[] = []
 
   // 3a. Attackers + Victims + Messages
-  for (const m of messages) {
+  for (const m of messages.slice(0, 100)) { // limit to 100 messages
     const aId = attackerValue(m.vector_type, m.sender, m.sender_domain)
     const aKind = attackerKind(m.vector_type)
 
@@ -145,7 +145,8 @@ export async function syncAll(): Promise<SyncStats> {
 
   // 3b. Correlation Groups + Campaigns
   const campaignsSeen = new Set<string>()
-  for (const g of groups) {
+  for (const g of groups.slice(0, 500)) {
+
     const messageIds = parseJsonArray(g.message_ids)
     const vectorTypes = parseJsonArray(g.vector_types)
     const campaignType = g.campaign_type ?? 'unknown'
@@ -198,7 +199,7 @@ export async function syncAll(): Promise<SyncStats> {
   }
 
   // 3c. Alerts
-  for (const a of alerts) {
+  for (const a of alerts.slice(0, 500)) {
     stmts.push({
       cypher: `
         MERGE (al:Alert { id: $id })
@@ -222,7 +223,7 @@ export async function syncAll(): Promise<SyncStats> {
   }
 
   // 3d. Rules
-  for (const r of rules) {
+  for (const r of rules.slice(0, 10000)) {
     stmts.push({
       cypher: `
         MERGE (rule:Rule { name: $name })

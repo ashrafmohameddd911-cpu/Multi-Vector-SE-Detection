@@ -1,5 +1,4 @@
 'use client'
-
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export interface FeedRule {
@@ -54,105 +53,85 @@ interface Options {
 }
 
 export function useLiveFeed(opts: Options = {}) {
-  const { vector, limit = 30, pollMs = 5000, enabled = true } = opts;
-  const [items, setItems] = useState<FeedItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  
-  const abortRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
+  const { vector, limit = 30, pollMs = 5000, enabled = true } = opts
+  const [items, setItems] = useState<FeedItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
 
   const fetchOnce = useCallback(async () => {
     // Abort any existing request before starting a new one
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
     try {
-      const qs = new URLSearchParams();
-      if (vector) qs.set('vector', vector);
-      qs.set('limit', String(limit));
-
+      const qs = new URLSearchParams()
+      if (vector) qs.set('vector', vector)
+      qs.set('limit', String(limit))
       const res = await fetch(`/api/feed/live?${qs.toString()}`, {
         signal: ac.signal,
         cache: 'no-store',
-      });
-
-      if (!res.ok) throw new Error(`Feed error: ${res.status}`);
-      
-      const json: { items: FeedItem[] } = await res.json();
-
+      })
+      if (!res.ok) throw new Error(`Feed error: ${res.status}`)
+      const json: { items: FeedItem[] } = await res.json()
       // Only update if the component is still mounted
       if (mountedRef.current) {
-        setItems(json.items ?? []);
-        setError(null);
+        setItems(json.items ?? [])
+        setError(null)
       }
     } catch (err: any) {
-      // SILENCE ABORT ERRORS
-      if (err?.name === 'AbortError') return;
-
+      if (err?.name === 'AbortError') return
       if (mountedRef.current) {
-        console.error('Live Feed Fetch Error:', err);
-        setError(err?.message ?? 'Failed to fetch feed');
+        console.error('Live Feed Fetch Error:', err)
+        setError(err?.message ?? 'Failed to fetch feed')
       }
     } finally {
       if (mountedRef.current) {
-        setLoading(false);
+        setLoading(false)
       }
     }
-  }, [vector, limit]);
+  }, [vector, limit])
 
   useEffect(() => {
-    mountedRef.current = true;
-    if (!enabled) return;
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
+    mountedRef.current = true
+    if (!enabled) return
+    let timer: ReturnType<typeof setTimeout> | null = null
     // Inside your useEffect -> tick() function
     const tick = async () => {
-      if (!mountedRef.current) return;
-
+      if (!mountedRef.current) return
       if (document.hidden) {
-        timer = setTimeout(tick, pollMs);
-        return;
+        timer = setTimeout(tick, pollMs)
+        return
       }
-
-      // WRAP IT IN A LOCAL TRY/CATCH/CATCH
       try {
-        await fetchOnce();
+        await fetchOnce()
       } catch (err: any) {
-        // This swallows the AbortError silently
-        if (err.name === 'AbortError') {
-          return; 
+        console.error('Live Feed Fetch Error:', err)
+        if (mountedRef.current) {
+          setError(err?.message ?? 'Failed to fetch feed')
         }
-        // Only log real errors (like network failures or 500s)
-        console.error("Critical Fetch Error:", err);
       }
-
       if (mountedRef.current) {
-        timer = setTimeout(tick, pollMs);
+        timer = setTimeout(tick, pollMs)
       }
-    };
-
+    }
     // Initial trigger
-    tick();
-
+    tick()
     const onVisibilityChange = () => {
       if (!document.hidden && mountedRef.current) {
         // Fetch immediately when user returns to tab
-        fetchOnce();
+        fetchOnce()
       }
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      mountedRef.current = false;
-      if (timer) clearTimeout(timer);
-      abortRef.current?.abort();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [enabled, pollMs, fetchOnce]);
+      mountedRef.current = false
+      if (timer) clearTimeout(timer)
+      abortRef.current?.abort()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [enabled, pollMs, fetchOnce])
 
-  return { items, loading, error, refresh: fetchOnce };
+  return { items, loading, error, refresh: fetchOnce }
 }

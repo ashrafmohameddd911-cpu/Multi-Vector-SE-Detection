@@ -7,13 +7,6 @@ interface UseLiveAlertsOptions {
   intervalMs?: number
 }
 
-/**
- * Polls /api/alerts for the latest alerts (MySQL-backed).
- *
- * - Polls every 5s by default.
- * - Pauses while the tab is hidden to avoid wasted cycles.
- * - Cancels in-flight requests on unmount.
- */
 export function useLiveAlerts(options: UseLiveAlertsOptions = {}) {
   const intervalMs = options.intervalMs ?? POLL_INTERVAL_MS
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -28,7 +21,6 @@ export function useLiveAlerts(options: UseLiveAlertsOptions = {}) {
     mountedRef.current = true;
 
     const fetchAlerts = async () => {
-      // Abort previous request
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -51,46 +43,49 @@ export function useLiveAlerts(options: UseLiveAlertsOptions = {}) {
       } finally {
         if (mountedRef.current) setIsLoading(false);
       }
-    };
+    }; // <-- FIXED: Added this closing brace for fetchAlerts
 
     const schedule = () => {
       if (document.visibilityState === 'hidden' || !mountedRef.current) return;
       
       timerRef.current = setTimeout(async () => {
-        await fetchAlerts();
-        if (mountedRef.current) schedule();
+        try {
+          await fetchAlerts();
+        } catch (e) {
+          // Ignore background loop errors
+        } finally {
+          if (mountedRef.current) schedule();
+        }
       }, intervalMs);
     };
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        // Immediate refresh when user comes back to the tab
-        fetchAlerts();
+        fetchAlerts().catch(() => {});
         schedule();
       } else {
-        // Stop polling when tab is hidden
         if (timerRef.current) clearTimeout(timerRef.current);
       }
     };
 
-    // 1. Initial run
-    fetchAlerts();
+    fetchAlerts().catch(() => {}); 
     schedule();
 
-    // 2. Event Listeners
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    // 3. CLEANUP (The most important part)
     return () => {
       mountedRef.current = false;
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) {
+         clearTimeout(timerRef.current);
+         timerRef.current = null;
+      }
       abortRef.current?.abort();
     };
   }, [intervalMs]);
 
-  return { alerts, isLoading, error };
-}
+  return { alerts, isLoading, error }; // <-- FIXED: Added the return for the hook
+} // <-- FIXED: Added this closing brace for the useLiveAlerts function
 
 /** Convert the /api/alerts JSON row into the client-side Alert shape. */
 function toAlert(row: any): Alert {
